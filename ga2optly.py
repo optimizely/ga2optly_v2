@@ -1,5 +1,4 @@
 #GA Segment Importer for Optimizely
-
 '''TO DO LIST:
 
 4.  LOOK INTO PICKLING FLOW TO SUPPORT MULTIPLE USERS?
