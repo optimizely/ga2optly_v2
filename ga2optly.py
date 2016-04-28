@@ -256,7 +256,6 @@ def GetGAIds(current_project_id, segment_id):
             'max_results':10000}
 
     while firstRun == True or response.get('nextLink'):
-        print "looping!"
         if firstRun == False:
             params['start_index'] = int(params['start_index']) + int(params['max_results'])
 
@@ -587,7 +586,6 @@ class SettingsConfPage(webapp2.RequestHandler):
                         pass
 
             project_info.put()
-            print project_info
 
             html = "<h1>Settings Confirmation</h1>%s" % (settings)
 
