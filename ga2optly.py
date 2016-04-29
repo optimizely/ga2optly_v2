@@ -660,16 +660,17 @@ class CronPage(webapp2.RequestHandler):
 
 class ResetPage(webapp2.RequestHandler):
     def get(self):
-        #This is here to delete all entities from NDB (helpful for dev envioronment cleanup)  USE CAUTION!!!
-        qry = Project_info.query()
-        projects = qry.fetch()
-        for project in projects:
-            project.key.delete()
+        #get project_id from context
+        context = verify_context(self.request.cookies.get('signed_request'))
+        current_project_id = context['context']['environment']['current_project']
 
-        qry = Segment_info.query()
+        qry = Segment_info.query(Segment_info.project_id == current_project_id)
         segments = qry.fetch()
         for segment in segments:
             segment.key.delete()
+
+        project_info = ndb.Key(Project_info, current_project_id).get()
+        project_info.key.delete()
 
         self.response.write(GENERIC_PAGE_TEMPLATE % ("ok, reset everything"))
 
