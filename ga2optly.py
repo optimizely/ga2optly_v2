@@ -29,7 +29,6 @@ from google.appengine.ext import ndb
 #-----------------Database Entities--------------------------
 
 class Project_info(ndb.Model): #key is optly project id
-    session_token = ndb.StringProperty(indexed=False) #Canvas session token
     project_id = ndb.IntegerProperty(indexed=True) #Optly project id
     credentials = ndb.PickleProperty(indexed=True) #GA credentials object, created by oauth flow
     api_token = ndb.StringProperty(indexed=True) #optly standard API token (used for cron)
@@ -200,14 +199,15 @@ def verify_context(query_string):
         return False
 
 #let's define our API methods
-def rest_api_put(project_id, url, data, token_type):
+def rest_api_put(project_id, url, data, token):
     #get parent project_info
     project_info = ndb.Key(Project_info, project_id).get()
 
-    if token_type == "canvas":
-        headers = {'Authorization': "Bearer " + project_info.session_token, 'Content-type': 'application/json'}
-    elif token_type == "standard":
+    if token == "standard":
         headers = {'Token': project_info.api_token, 'Content-type': 'application/json'}
+    else:
+        headers = {'Authorization': "Bearer " + token, 'Content-type': 'application/json'}
+
     opener = urllib2.build_opener(urllib2.HTTPHandler)
     request = urllib2.Request(url, data=json.dumps(data), headers=headers)
     request.get_method = lambda: 'PUT'
@@ -215,23 +215,29 @@ def rest_api_put(project_id, url, data, token_type):
     response_data = json.loads(api_response.read())
     return response_data
 
-def rest_api_post(project_id, url, data):
+def rest_api_post(project_id, url, data, session_token):
     api_request = urllib2.Request(url)
 
-    #get parent project_info
-    project_info = ndb.Key(Project_info, project_id).get()
     api_request.add_header("Content-type", "application/json")
-    api_request.add_header("Authorization", "Bearer " + project_info.session_token)
+    api_request.add_header("Authorization", "Bearer " + session_token)
     api_response = urllib2.urlopen(api_request, json.dumps(data), 20)
     response_data = json.loads(api_response.read())
     return response_data
 
-def rest_api_get(project_id, url):
-    api_request = urllib2.Request(url)
-
+def rest_api_get(project_id, url, token):
     #get parent project_info
     project_info = ndb.Key(Project_info, project_id).get()
-    api_request.add_header("Authorization", "Bearer " + project_info.session_token)
+
+    #create request object
+    api_request = urllib2.Request(url)
+    api_request.add_header("Content-type", "application/json")
+
+    #check token type
+    if token == "standard":
+        api_request.add_header("Token", project_info.api_token)
+    else:
+        api_request.add_header("Authorization", "Bearer " + token)
+
     api_response = urllib2.urlopen(api_request, None, 20)
     response_data = json.loads(api_response.read())
     return response_data
@@ -287,18 +293,13 @@ class MainPage(webapp2.RequestHandler):
             project_id = context['context']['environment']['current_project']
 
             #check for project_object and create if it doesn't exist
-            project = ndb.Key(Project_info, project_id).get()
+            project_info = ndb.Key(Project_info, project_id).get()
 
-            if project == None:
+            if project_info == None:
                 project_info = Project_info()
                 project_info.project_id = project_id
                 project_info.key = ndb.Key(Project_info, project_id)
-
-            else:
-                project_info = project
-
-            project_info.session_token = token
-            project_info.put()
+                project_info.put()
 
             #configure UI
             step_3 = '<a href="/select">Import</a>'
@@ -370,6 +371,7 @@ class CreatePage(webapp2.RequestHandler):
         #get project_id from context
         context = verify_context(self.request.cookies.get('signed_request'))
         current_project_id = context['context']['environment']['current_project']
+        session_token = context['context']['client']['access_token']
 
         if 'segment' in self.request.query_string:
             param = self.request.query_string.split("segment=")[1].split("&")[0]
@@ -391,7 +393,7 @@ class CreatePage(webapp2.RequestHandler):
 
                 #check to see if there's already a list with this name
                 url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (current_project_id)
-                response = rest_api_get(current_project_id, url)
+                response = rest_api_get(current_project_id, url, session_token)
                 optly_list_id = ""
                 for item in response:
                     if item['name'] == data['name']:
@@ -411,7 +413,7 @@ class CreatePage(webapp2.RequestHandler):
 
                 if optly_list_id == "":
                     url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (current_project_id)
-                    response = rest_api_post(current_project_id, url, data)
+                    response = rest_api_post(current_project_id, url, data, session_token)
                     segment_info.optly_id = response['id']
                     segment_info.key = ndb.Key(Segment_info, response['id'])
                     segment_info.put()
@@ -419,7 +421,7 @@ class CreatePage(webapp2.RequestHandler):
                     self.response.write(CREATE_PAGE_TEMPLATE % ('<h1>Created an Optimizely Uploaded Audience with %s IDs!  Your list is named "%s".</h1>' % (len(list_content), data['name'])))
                 else:
                     url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" %(optly_list_id)
-                    response = rest_api_put(current_project_id, url, data, "canvas")
+                    response = rest_api_put(current_project_id, url, data, session_token)
                     segment_info.optly_id = optly_list_id
                     segment_info.key = ndb.Key(Segment_info, optly_list_id)
                     segment_info.put()
@@ -608,7 +610,8 @@ class CronPage(webapp2.RequestHandler):
 
         for project_info in projects:
             #check for last update and proceed if it has been longer than the cadence value (which is number of seconds)
-            if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end) and (project_info.last_cron_end >= project_info.last_cron_start):
+            if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end) and (project_info.last_cron_end >= project_info.last_cron_start or project_info.last_cron_end == 0):
+                print "passed time check"
                 #record start time to prevent cron from starting while this project is still processing segments
                 project_info.last_cron_start = int(time.time())
                 project_info.put()
@@ -618,7 +621,7 @@ class CronPage(webapp2.RequestHandler):
 
                 #get list of uploaded audience ids from Optly for project
                 url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (project_info.project_id)
-                response = rest_api_get(project_info.project_id, url)
+                response = rest_api_get(project_info.project_id, url, "standard")
                 optly_id_list = []
                 for uploaded_list in response:
                     optly_id_list.append(uploaded_list['id'])
