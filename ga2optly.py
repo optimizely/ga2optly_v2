@@ -21,6 +21,8 @@ import webapp2
 import httplib2
 import hashlib
 import hmac
+import pickle
+from simplecrypt import encrypt, decrypt
 from oauth2client import client
 from apiclient.discovery import build
 from google.appengine.ext import ndb
@@ -30,8 +32,8 @@ from google.appengine.ext import ndb
 
 class Project_info(ndb.Model): #key is optly project id
     project_id = ndb.IntegerProperty(indexed=True) #Optly project id
-    credentials = ndb.PickleProperty(indexed=True) #GA credentials object, created by oauth flow
-    api_token = ndb.StringProperty(indexed=True) #optly standard API token (used for cron)
+    credentials = ndb.BlobProperty(indexed=True) #pickeled and then ENCRYPTED GA credentials object
+    api_token = ndb.BlobProperty(indexed=True) #ENCRYPTED optly standard API token (used for cron)
     dimension_id = ndb.StringProperty(indexed=False) #ga dimension index number for where _ga cookie value is stored
     view_id = ndb.StringProperty(indexed=False) #ga view id (where we're retrieving ga data from)
     interval = ndb.StringProperty(indexed=False) #number of days in the past we should look for ga data
@@ -56,7 +58,9 @@ flow = client.flow_from_clientsecrets(
 )
 flow.params['access_type'] = 'offline'
 
-client_secret = 'CLIENT_SECRET'
+client_secret = '' #supply Optimizely Canvas App client_secret
+
+encryption_password = '' #supply a secure password, I use an MD5 hash value
 
 #--------------CSS and HTML Layouts for the web app--------
 
@@ -199,13 +203,11 @@ def verify_context(query_string):
         return False
 
 #let's define our API methods
-def rest_api_put(project_id, url, data, token):
-    #get parent project_info
-    project_info = ndb.Key(Project_info, project_id).get()
+def rest_api_put(project_id, url, data, token_type, token):
 
-    if token == "standard":
-        headers = {'Token': project_info.api_token, 'Content-type': 'application/json'}
-    else:
+    if token_type == "standard":
+        headers = {'Token': token, 'Content-type': 'application/json'}
+    elif token_type == "bearer":
         headers = {'Authorization': "Bearer " + token, 'Content-type': 'application/json'}
 
     opener = urllib2.build_opener(urllib2.HTTPHandler)
@@ -224,29 +226,26 @@ def rest_api_post(project_id, url, data, session_token):
     response_data = json.loads(api_response.read())
     return response_data
 
-def rest_api_get(project_id, url, token):
-    #get parent project_info
-    project_info = ndb.Key(Project_info, project_id).get()
-
+def rest_api_get(project_id, url, token_type, token):
     #create request object
     api_request = urllib2.Request(url)
     api_request.add_header("Content-type", "application/json")
 
     #check token type
-    if token == "standard":
-        api_request.add_header("Token", project_info.api_token)
-    else:
+    if token_type == "standard":
+        api_request.add_header("Token", token)
+    elif token_type == "bearer":
         api_request.add_header("Authorization", "Bearer " + token)
 
     api_response = urllib2.urlopen(api_request, None, 20)
     response_data = json.loads(api_response.read())
     return response_data
 
-def GetGAIds(current_project_id, segment_id):
+def GetGAIds(current_project_id, segment_id, clear_credentials):
     #get google oauth credentials and build the service object
     project_info = ndb.Key(Project_info, current_project_id).get()
 
-    http_auth = project_info.credentials.authorize(httplib2.Http())
+    http_auth = clear_credentials.authorize(httplib2.Http())
     analytics = build('analytics', 'v3', http=http_auth)
 
     #handle pagination
@@ -273,6 +272,16 @@ def GetGAIds(current_project_id, segment_id):
                 list_content.append(row[0])
 
     return list_content
+
+def ClearCredentials(current_project_id):
+    #get parent project_info
+    project_info = ndb.Key(Project_info, current_project_id).get()
+
+    encrypt_credentials = project_info.credentials
+    pickled_credentials = decrypt(encryption_password, encrypt_credentials)
+    clear_credentials = pickle.loads(pickled_credentials)
+
+    return clear_credentials
 
 #-----------------Web App Page Request Handlers--------------
 
@@ -339,7 +348,11 @@ class OAuthPage(webapp2.RequestHandler):
 
         if "code" in self.request.query_string:
             code = self.request.query_string.split("code=")[1].split("&")[0]
-            credentials = flow.step2_exchange(code)
+            #get credentials object
+            clear_credentials = flow.step2_exchange(code)
+            #pickle and then encrypt credentials object
+            pickled_credentials = pickle.dumps(clear_credentials)
+            credentials = encrypt(encryption_password, pickled_credentials)
             project_info.credentials = credentials
             project_info.put()
 
@@ -352,9 +365,11 @@ class SelectPage(webapp2.RequestHandler):
         #get project_id from context
         context = verify_context(self.request.cookies.get('signed_request'))
         current_project_id = context['context']['environment']['current_project']
-        project_info = ndb.Key(Project_info, current_project_id).get()
 
-        http_auth = project_info.credentials.authorize(httplib2.Http())
+        #get clear credentials
+        clear_credentials = ClearCredentials(current_project_id)
+
+        http_auth = clear_credentials.authorize(httplib2.Http())
         analytics = build('analytics', 'v3', http=http_auth)
 
         #query the api
@@ -383,8 +398,10 @@ class CreatePage(webapp2.RequestHandler):
             segment_name = segment_name_pre.replace('+','_')
             segment_id = segment_obj[1]
 
+            #get clear_credentials for GA request
+            clear_credentials = ClearCredentials(current_project_id)
 
-            list_content = GetGAIds(current_project_id, segment_id)
+            list_content = GetGAIds(current_project_id, segment_id, clear_credentials)
             #We should have all ids from results by now
             if len(list_content) > 0 and len(list_content) < 180000:
                 data = {}
@@ -393,7 +410,7 @@ class CreatePage(webapp2.RequestHandler):
 
                 #check to see if there's already a list with this name
                 url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (current_project_id)
-                response = rest_api_get(current_project_id, url, session_token)
+                response = rest_api_get(current_project_id, url, "bearer", session_token)
                 optly_list_id = ""
                 for item in response:
                     if item['name'] == data['name']:
@@ -421,7 +438,7 @@ class CreatePage(webapp2.RequestHandler):
                     self.response.write(CREATE_PAGE_TEMPLATE % ('<h1>Created an Optimizely Uploaded Audience with %s IDs!  Your list is named "%s".</h1>' % (len(list_content), data['name'])))
                 else:
                     url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" %(optly_list_id)
-                    response = rest_api_put(current_project_id, url, data, session_token)
+                    response = rest_api_put(current_project_id, url, data, "bearer", session_token)
                     segment_info.optly_id = optly_list_id
                     segment_info.key = ndb.Key(Segment_info, optly_list_id)
                     segment_info.put()
@@ -469,7 +486,8 @@ class SchedulePage(webapp2.RequestHandler):
             else:
                 disabled_form = "<form action='/update' method='get'>%s<input type='submit' value='Enable Selected Segments'></form>" % (disabled_segments)
 
-            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (project_info.api_token, project_info.update_cadence_str, enabled_form, disabled_form))
+            clear_api_token = decrypt(encryption_password,project_info.api_token)
+            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (clear_api_token, project_info.update_cadence_str, enabled_form, disabled_form))
 
 class UpdatePage(webapp2.RequestHandler):
     def get(self):
@@ -498,7 +516,10 @@ class SettingsPage(webapp2.RequestHandler):
         current_project_id = context['context']['environment']['current_project']
         project_info = ndb.Key(Project_info, current_project_id).get()
 
-        http_auth = project_info.credentials.authorize(httplib2.Http())
+        #get clear credentials
+        clear_credentials = ClearCredentials(current_project_id)
+
+        http_auth = clear_credentials.authorize(httplib2.Http())
         analytics = build('analytics', 'v3', http=http_auth)
 
         #query the api for a list of views
@@ -548,7 +569,8 @@ class SettingsConfPage(webapp2.RequestHandler):
                 if "api_token" in query:
                     api_token = query.split("api_token=")[1]
                     if len(api_token) > 0:
-                        project_info.api_token = api_token
+                        encrypt_api_token = encrypt(encryption_password, api_token)
+                        project_info.api_token = encrypt_api_token
                         settings += '<p>API Token: %s</p>' %(api_token)
                 elif "update_cadence" in query:
                     cadence_str = query.split("update_cadence=")[1]
@@ -619,9 +641,15 @@ class CronPage(webapp2.RequestHandler):
                 qry = Segment_info.query(Segment_info.auto_update == True, Segment_info.project_id == project_info.project_id)
                 update_segments = qry.fetch()
 
+                #get and decrypt GA credentials object
+                clear_credentials = ClearCredentials(project_info.project_id)
+
+                #get and decrypt optly api_token
+                clear_api_token = decrypt(encryption_password, project_info.api_token)
+
                 #get list of uploaded audience ids from Optly for project
                 url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (project_info.project_id)
-                response = rest_api_get(project_info.project_id, url, "standard")
+                response = rest_api_get(project_info.project_id, url, "standard", clear_api_token)
                 optly_id_list = []
                 for uploaded_list in response:
                     optly_id_list.append(uploaded_list['id'])
@@ -638,7 +666,7 @@ class CronPage(webapp2.RequestHandler):
                     #segment is still in Optly project, so...
                     elif deleted == False:
                         #update list with fresh GA data
-                        list_content = GetGAIds(project_info.project_id, segment_info.ga_id)
+                        list_content = GetGAIds(project_info.project_id, segment_info.ga_id, clear_credentials)
                         #We should have all ids from results by now
                         if len(list_content) > 0 and len(list_content) < 180000:
                             data = {}
@@ -649,7 +677,7 @@ class CronPage(webapp2.RequestHandler):
                             data['format'] = "csv"
                             data['key_fields'] = "_ga"
                             url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" % (segment_info.optly_id)
-                            response = rest_api_put(project_info.project_id, url, data, "standard")
+                            response = rest_api_put(project_info.project_id, url, data, "standard", clear_api_token)
                             html += "<p>%s</p>" % (response)
 
                 #after last segment in this project is checked, update last_cron_end to current time
