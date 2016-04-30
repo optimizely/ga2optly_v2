@@ -27,6 +27,8 @@ from oauth2client import client
 from apiclient.discovery import build
 from google.appengine.ext import ndb
 
+import config
+
 
 #-----------------Database Entities--------------------------
 
@@ -50,17 +52,20 @@ class Segment_info(ndb.Model): #key is optly
     auto_update = ndb.BooleanProperty(indexed=True, default=False) #is auto-update enabled for this segment?
 
 #--------------Google Oauth and Env-----------------------------
+#get config options from config.py
+configuration = config.get_settings("Dev")
+
 #google oauth objects
 flow = client.flow_from_clientsecrets(
     'client_secrets.json',
     scope='https://www.googleapis.com/auth/analytics.readonly',
-    redirect_uri='http://localhost:8080/oauth'
+    redirect_uri=configuration.redirect_uri
 )
 flow.params['access_type'] = 'offline'
 
-client_secret = '' #supply Optimizely Canvas App client_secret
+client_secret = configuration.client_secret #supply Optimizely Canvas App client_secret
 
-encryption_password = '' #supply a secure password, I use an MD5 hash value
+encryption_password = configuration.encryption_password #password for encryption of keys
 
 #--------------CSS and HTML Layouts for the web app--------
 
@@ -86,6 +91,7 @@ MAIN_PAGE_TEMPLATE = CSS + """\
     <p>
         <a href="/reset">Reset this app</a>
     </p>
+    <div>Version 2.0</div>
   </body>
 </html>
 """
@@ -117,7 +123,6 @@ SCHEDULE_PAGE_TEMPLATE_1 = CSS + """\
     <p>
         Enter update cadence: <input type='text' name='update_cadence' required>
         <select name='unit'>
-            <option value='minutes'>minutes</option>
             <option value='hours'>hours</option>
             <option value='days'>days</option>
         </select>
@@ -135,7 +140,7 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
     <h1>Auto-update Settings</h1>
     <h2>Admin API Token</h2>
     <p>
-    <p>Current API Token = <b>%s</b></p>
+    <p>Last 6 characters of Current API Token = <b>%s</b></p>
     <p>
     <form action='/settings_conf' method='get'>Enter New Admin API Token: <input type='text' name='api_token'>
     </p>
@@ -145,7 +150,6 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
         <p>
         Enter new update cadence: <input type='text' name='update_cadence'>
         <select name='unit'>
-            <option value='minutes'>minutes</option>
             <option value='hours'>hours</option>
             <option value='days'>days</option>
         </select>
@@ -487,7 +491,8 @@ class SchedulePage(webapp2.RequestHandler):
                 disabled_form = "<form action='/update' method='get'>%s<input type='submit' value='Enable Selected Segments'></form>" % (disabled_segments)
 
             clear_api_token = decrypt(encryption_password,project_info.api_token)
-            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (clear_api_token, project_info.update_cadence_str, enabled_form, disabled_form))
+            token_fragment = clear_api_token[len(clear_api_token)-6:]
+            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (token_fragment, project_info.update_cadence_str, enabled_form, disabled_form))
 
 class UpdatePage(webapp2.RequestHandler):
     def get(self):
@@ -577,8 +582,6 @@ class SettingsConfPage(webapp2.RequestHandler):
                     try:
                         cadence_int = int(cadence_str)
                         unit = self.request.query_string.split("unit=")[1].split("&")[0]
-                        if unit == "minutes":
-                            project_info.update_cadence = cadence_int * 60
                         if unit == "hours":
                             project_info.update_cadence = cadence_int * 3600
                         if unit == "days":
@@ -633,7 +636,6 @@ class CronPage(webapp2.RequestHandler):
         for project_info in projects:
             #check for last update and proceed if it has been longer than the cadence value (which is number of seconds)
             if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end) and (project_info.last_cron_end >= project_info.last_cron_start or project_info.last_cron_end == 0):
-                print "passed time check"
                 #record start time to prevent cron from starting while this project is still processing segments
                 project_info.last_cron_start = int(time.time())
                 project_info.put()
@@ -678,16 +680,16 @@ class CronPage(webapp2.RequestHandler):
                             data['key_fields'] = "_ga"
                             url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" % (segment_info.optly_id)
                             response = rest_api_put(project_info.project_id, url, data, "standard", clear_api_token)
-                            html += "<p>%s</p>" % (response)
+                            html += "NEXT UPDATE RESPONSE: %s" % (response)
 
                 #after last segment in this project is checked, update last_cron_end to current time
                 project_info.last_cron_end = int(time.time())
                 project_info.put()
 
         if len(html) == 0:
-            self.response.write(GENERIC_PAGE_TEMPLATE % ("No lists updated"))
+            print "No lists updated"
         else:
-            self.response.write(GENERIC_PAGE_TEMPLATE % (html))
+            print html
 
 class ResetPage(webapp2.RequestHandler):
     def get(self):

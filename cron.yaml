@@ -1,0 +1,4 @@
+cron:
+- description: Check segments set for auto-update and download fresh data
+  url: /cron
+  schedule: every 1 minutes
