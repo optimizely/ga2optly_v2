@@ -44,7 +44,7 @@ class Project_info(ndb.Model): #key is optly project id
     last_cron_end = ndb.IntegerProperty(indexed=False, default=0) #epoch timestamp for last time cron completed for this project
     last_cron_start = ndb.IntegerProperty(indexed=False, default=0) #epoch timestamp for last time cron started for this project
 
-class Segment_info(ndb.Model): #key is optly
+class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
     segment_name = ndb.StringProperty(indexed=False) #name of GA segment
     ga_id = ndb.StringProperty(indexed=False) #ga segment id
     optly_id = ndb.IntegerProperty(indexed=False) #optly uploaded list id
@@ -53,7 +53,7 @@ class Segment_info(ndb.Model): #key is optly
 
 #--------------Google Oauth and Env-----------------------------
 #get config options from config.py
-configuration = config.get_settings("Dev")
+configuration = config.get_settings("Dev") #gets environment variables.  Options are "Dev" and "Prod"
 
 #google oauth objects
 flow = client.flow_from_clientsecrets(
@@ -119,7 +119,7 @@ SCHEDULE_PAGE_TEMPLATE_1 = CSS + """\
     <h1>Auto-update settings</h1>
     <h2>Admin API Token</h2>
     <p>
-        <form action='/settings_conf' method='get'>Enter Admin API Token: <input type='text' name='api_token' required>
+        <form action='/settings_conf' method='post'>Enter Admin API Token: <input type='text' name='api_token' required>
     <p>
         Enter update cadence: <input type='text' name='update_cadence' required>
         <select name='unit'>
@@ -142,7 +142,7 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
     <p>
     <p>Last 6 characters of Current API Token = <b>%s</b></p>
     <p>
-    <form action='/settings_conf' method='get'>Enter New Admin API Token: <input type='text' name='api_token'>
+    <form action='/settings_conf' method='post'>Enter New Admin API Token: <input type='text' name='api_token'>
     </p>
     <p>
     Current update cadence = <b>%s</b>
@@ -170,7 +170,7 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
 
 SETTINGS_PAGE_TEMPLATE = CSS + """\
     <h1>Set up importing preferences!</h1>
-    <form action='/settings_conf' method='get'>
+    <form action='/settings_conf' method='post'>
         <p>GA View:
             <select name="view_id" required>
                 %s
@@ -188,6 +188,17 @@ CREATE_PAGE_TEMPLATE = CSS + """\
     <h2>Updates made:</h2>
     %s
     <p><a href="/select">Select another segment</a></p>
+    <p><a href='/'>Back to top page</a></p>
+    </body>
+</html>
+"""
+
+SELECT_PAGE_TEMPLATE = CSS + """\
+    <h2>Please select a segment to import:</h2>
+    <form action='/create' method='post'>
+    %s
+    <input type='submit' value='Submit'>
+    </form>
     <p><a href='/'>Back to top page</a></p>
     </body>
 </html>
@@ -364,6 +375,8 @@ class OAuthPage(webapp2.RequestHandler):
         else:
             self.response.write(GENERIC_PAGE_TEMPLATE % ("Uh oh, you aren't authenticated!"))
 
+
+
 class SelectPage(webapp2.RequestHandler):
     def get(self):
         #get project_id from context
@@ -382,24 +395,20 @@ class SelectPage(webapp2.RequestHandler):
         for segment in segments['items']:
             value = json.dumps([segment['name'],segment['segmentId']])
             segment_list+= "<input type='radio' name='segment' value='%s'> %s (%s)<br>" % (value, segment['name'], segment['type'])
-        self.response.write(GENERIC_PAGE_TEMPLATE % ("<h2>Please select a segment to import:</h2><form action='/create' method='get'>%s<input type='submit' value='Submit'></form>") % (segment_list))
+        self.response.write(SELECT_PAGE_TEMPLATE % (segment_list))
 
 
 class CreatePage(webapp2.RequestHandler):
-    def get(self):
+    def post(self):
         #get project_id from context
         context = verify_context(self.request.cookies.get('signed_request'))
         current_project_id = context['context']['environment']['current_project']
         session_token = context['context']['client']['access_token']
 
-        if 'segment' in self.request.query_string:
-            param = self.request.query_string.split("segment=")[1].split("&")[0]
-            segment_string = urllib.unquote(param)
-            array = segment_string.split(',+')
-            new_string = array[0] + ',' + array[1]
-            segment_obj = json.loads(new_string)
-            segment_name_pre = re.sub('[^a-zA-Z0-9\-\_\+]', '-', segment_obj[0])
-            segment_name = segment_name_pre.replace('+','_')
+        if 'segment' in self.request.arguments():
+            segment_obj = json.loads(self.request.get('segment'))
+            segment_name_pre = re.sub('[^a-zA-Z0-9\-\_\s]', '-', segment_obj[0])
+            segment_name = segment_name_pre.replace(' ','_')
             segment_id = segment_obj[1]
 
             #get clear_credentials for GA request
@@ -436,7 +445,7 @@ class CreatePage(webapp2.RequestHandler):
                     url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (current_project_id)
                     response = rest_api_post(current_project_id, url, data, session_token)
                     segment_info.optly_id = response['id']
-                    segment_info.key = ndb.Key(Segment_info, response['id'])
+                    segment_info.key = ndb.Key(Segment_info, "%s:%s" % (current_project_id, response['id']))
                     segment_info.put()
 
                     self.response.write(CREATE_PAGE_TEMPLATE % ('<h1>Created an Optimizely Uploaded Audience with %s IDs!  Your list is named "%s".</h1>' % (len(list_content), data['name'])))
@@ -444,7 +453,7 @@ class CreatePage(webapp2.RequestHandler):
                     url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" %(optly_list_id)
                     response = rest_api_put(current_project_id, url, data, "bearer", session_token)
                     segment_info.optly_id = optly_list_id
-                    segment_info.key = ndb.Key(Segment_info, optly_list_id)
+                    segment_info.key = ndb.Key(Segment_info, "%s:%s" % (current_project_id, optly_list_id))
                     segment_info.put()
 
                     self.response.write(CREATE_PAGE_TEMPLATE % ('<h1>This segment had already been imported as "%s".  Updated with fresh data, your list now has %s IDs.</h1>' % (data['name'], len(list_content))))
@@ -483,25 +492,24 @@ class SchedulePage(webapp2.RequestHandler):
             if enabled_segments == "":
                 enabled_form = '<div>No segments enabled</div>'
             else:
-                enabled_form = "<form action='/update' method='get'>%s<input type='submit' value='Disable Selected Segments'></form>" % (enabled_segments)
+                enabled_form = "<form action='/update' method='post'>%s<input type='submit' value='Disable Selected Segments'></form>" % (enabled_segments)
 
             if disabled_segments == "":
                 disabled_form = '<div>No segments disabled</div>'
             else:
-                disabled_form = "<form action='/update' method='get'>%s<input type='submit' value='Enable Selected Segments'></form>" % (disabled_segments)
+                disabled_form = "<form action='/update' method='post'>%s<input type='submit' value='Enable Selected Segments'></form>" % (disabled_segments)
 
             clear_api_token = decrypt(encryption_password,project_info.api_token)
             token_fragment = clear_api_token[len(clear_api_token)-6:]
             self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (token_fragment, project_info.update_cadence_str, enabled_form, disabled_form))
 
 class UpdatePage(webapp2.RequestHandler):
-    def get(self):
-        if 'segment_id' in self.request.query_string:
-            segment_ids = self.request.query_string.split("&")
+    def post(self):
+        if 'segment_id' in self.request.arguments():
+            segment_ids = self.request.get_all('segment_id')
             formatted_status = ""
-            for segment_id in segment_ids:
-                optly_id = segment_id.split("segment_id=")[1]
-                segment_info = ndb.Key(Segment_info, int(optly_id)).get()
+            for optly_id in segment_ids:
+                segment_info = ndb.Key(Segment_info, "%s:%s" % (current_project_id, optly_id)).get()
                 if segment_info.auto_update == False:
                     segment_info.auto_update = True
                     formatted_status += '<p>Enabled auto-update for Segment "%s"</p>' % (segment_info.segment_name)
@@ -558,30 +566,30 @@ class SettingsPage(webapp2.RequestHandler):
 
 
 class SettingsConfPage(webapp2.RequestHandler):
-    def get(self):
+    def post(self):
         #get project_id from context
         context = verify_context(self.request.cookies.get('signed_request'))
         current_project_id = context['context']['environment']['current_project']
 
-        if len(self.request.query_string) > 0:
-            query_array = urllib.unquote(self.request.query_string).split("&")
+        arg_list = self.request.arguments()
+        if len(arg_list) > 0:
 
             #get PROJECT object
             project_info = ndb.Key(Project_info, current_project_id).get()
 
             settings = ""
-            for query in query_array:
-                if "api_token" in query:
-                    api_token = query.split("api_token=")[1]
+            for arg in arg_list:
+                if "api_token" in arg:
+                    api_token = self.request.get(arg)
                     if len(api_token) > 0:
                         encrypt_api_token = encrypt(encryption_password, api_token)
                         project_info.api_token = encrypt_api_token
                         settings += '<p>API Token: %s</p>' %(api_token)
-                elif "update_cadence" in query:
-                    cadence_str = query.split("update_cadence=")[1]
+                elif "update_cadence" in arg:
+                    cadence_str = self.request.get(arg)
                     try:
                         cadence_int = int(cadence_str)
-                        unit = self.request.query_string.split("unit=")[1].split("&")[0]
+                        unit = self.request.get("unit")
                         if unit == "hours":
                             project_info.update_cadence = cadence_int * 3600
                         if unit == "days":
@@ -590,21 +598,21 @@ class SettingsConfPage(webapp2.RequestHandler):
                         settings += '<p>Update Cadence: Every %s %s</p>' % (cadence_str, unit)
                     except:
                         pass
-                elif "view_id" in query:
-                    view_id = query.split("view_id=")[1]
+                elif "view_id" in arg:
+                    view_id = self.request.get(arg)
                     if len(view_id) > 0:
                         project_info.view_id = "ga:" + view_id
                         settings += '<p>GA View ID: %s</p>' %(view_id)
-                elif "interval" in query:
-                    interval = query.split("interval=")[1]
+                elif "interval" in arg:
+                    interval = self.request.get(arg)
                     try:
                         int(interval)
                         project_info.interval = interval + "daysAgo"
                         settings += '<p>GA Data Range: Last %s days</p>' %(interval)
                     except:
                         pass
-                elif "dimension_id" in query:
-                    dimension_id = query.split("dimension_id=")[1]
+                elif "dimension_id" in arg:
+                    dimension_id = self.request.get(arg)
                     try:
                         int(dimension_id)
                         project_info.dimension_id = "ga:dimension" + dimension_id
