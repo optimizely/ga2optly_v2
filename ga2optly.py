@@ -505,6 +505,9 @@ class SchedulePage(webapp2.RequestHandler):
 
 class UpdatePage(webapp2.RequestHandler):
     def post(self):
+        context = verify_context(self.request.cookies.get('signed_request'))
+        current_project_id = context['context']['environment']['current_project']
+
         if 'segment_id' in self.request.arguments():
             segment_ids = self.request.get_all('segment_id')
             formatted_status = ""
