@@ -191,6 +191,8 @@ SETTINGS_PAGE_TEMPLATE = CSS + """\
 CREATE_PAGE_TEMPLATE = CSS + """\
     <h2>Updates made:</h2>
     %s
+    <br>
+    Note:  Uploaded Audience data may take up to 4 hours to propagate and be available for targeting.
     <p><a href="/select">Select another segment</a></p>
     <p><a href='/'>Back to top page</a></p>
     </body>
@@ -310,7 +312,7 @@ class MainPage(webapp2.RequestHandler):
     def get(self):
         #deal with verifying Optly context, refreshing signed_request cookie if query is present (because canvas app just loaded)
         if "signed_request" in self.request.query_string:
-            self.response.set_cookie('signed_request', self.request.query_string)
+            self.response.set_cookie('signed_request', self.request.query_string, httponly=True)
             context = verify_context(self.request.query_string)
         else:
             context = verify_context(self.request.cookies.get('signed_request'))
