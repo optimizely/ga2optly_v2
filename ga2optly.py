@@ -53,7 +53,7 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
 
 #--------------Google Oauth and Env-----------------------------
 #get config options from config.py
-configuration = config.get_settings("Dev") #gets environment variables.  Options are "Dev" and "Prod"
+configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
 
 #google oauth objects
 flow = client.flow_from_clientsecrets(
@@ -126,6 +126,8 @@ SCHEDULE_PAGE_TEMPLATE_1 = CSS + """\
             <option value='hours'>hours</option>
             <option value='days'>days</option>
         </select>
+        <br>
+        Note:  Uploaded Audience data may take up to 4 hours to propagate and be available for targeting.
     </p>
     <p>
     <input type='submit' value='Submit'>
@@ -153,6 +155,8 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
             <option value='hours'>hours</option>
             <option value='days'>days</option>
         </select>
+        <br>
+        Note:  Uploaded Audience data may take up to 4 hours to propagate and be available for targeting.
     </p>
 
     <input type='submit' value='Submit'>
