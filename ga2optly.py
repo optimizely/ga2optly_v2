@@ -2,7 +2,7 @@
 '''
 KNOWN LIMITATIONS:
 
-1. Only works with lists smaller than 180,000 ids (Capped at that limit because of 5gb uploaded audience limit).  Consider migrating to DCP.
+1. Only works with lists smaller than 180,000 ids (Capped at that limit because of 5mb uploaded audience limit).  Consider migrating to DCP.
 '''
 
 #---------------Python Modules-----------------------------
