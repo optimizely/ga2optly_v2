@@ -1,13 +1,8 @@
 #GA Segment Importer for Optimizely
-'''TO DO LIST:
-
-4.  LOOK INTO PICKLING FLOW TO SUPPORT MULTIPLE USERS?
-
-
-
+'''
 KNOWN LIMITATIONS:
 
-1. Only works with lists smaller than 180,000 ids (Capped at that limit because of 5gb uploaded audience limit).  Going to fix by migrating to DCP
+1. Only works with lists smaller than 180,000 ids (Capped at that limit because of 5gb uploaded audience limit).  Consider migrating to DCP.
 '''
 
 #---------------Python Modules-----------------------------
@@ -22,7 +17,8 @@ import httplib2
 import hashlib
 import hmac
 import pickle
-from simplecrypt import encrypt, decrypt
+from Crypto.Cipher import AES
+from Crypto import Random
 from oauth2client import client
 from apiclient.discovery import build
 from google.appengine.ext import ndb
@@ -42,7 +38,6 @@ class Project_info(ndb.Model): #key is optly project id
     update_cadence = ndb.IntegerProperty(indexed=False) #number of seconds between cron updates being allowed to run for lists in this project
     update_cadence_str = ndb.StringProperty(indexed=False) #string expressing number of minutes, hours or days between updates
     last_cron_end = ndb.IntegerProperty(indexed=False, default=0) #epoch timestamp for last time cron completed for this project
-    last_cron_start = ndb.IntegerProperty(indexed=False, default=0) #epoch timestamp for last time cron started for this project
 
 class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
     segment_name = ndb.StringProperty(indexed=False) #name of GA segment
@@ -51,7 +46,7 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
     project_id = ndb.IntegerProperty(indexed=True) #optly project id
     auto_update = ndb.BooleanProperty(indexed=True, default=False) #is auto-update enabled for this segment?
 
-#--------------Google Oauth and Env-----------------------------
+#--------------Google Oauth, encryption, and environment-----------------------------
 #get config options from config.py
 configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
 
@@ -65,7 +60,28 @@ flow.params['access_type'] = 'offline'
 
 client_secret = configuration.client_secret #supply Optimizely Canvas App client_secret
 
-encryption_password = configuration.encryption_password #password for encryption of keys
+#AES encryption method thanks to http://stackoverflow.com/questions/12524994/encrypt-decrypt-using-pycrypto-aes-256 (author http://stackoverflow.com/users/696326/marcus)
+BS = 16
+pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS)
+unpad = lambda s : s[:-ord(s[len(s)-1:])]
+
+class AESCipher:
+    def __init__( self, key ):
+        self.key = key
+
+    def encrypt( self, raw ):
+        raw = pad(raw)
+        iv = Random.new().read( AES.block_size )
+        cipher = AES.new( self.key, AES.MODE_CBC, iv )
+        return base64.b64encode( iv + cipher.encrypt( raw ) )
+
+    def decrypt( self, enc ):
+        enc = base64.b64decode(enc)
+        iv = enc[:16]
+        cipher = AES.new(self.key, AES.MODE_CBC, iv )
+        return unpad(cipher.decrypt( enc[16:] ))
+
+obj = AESCipher(configuration.encryption_key)
 
 #--------------CSS and HTML Layouts for the web app--------
 
@@ -87,9 +103,6 @@ MAIN_PAGE_TEMPLATE = CSS + """\
     </p>
     <p>
         Step 4:  Configure Automatic Updates:  %s
-    </p>
-    <p>
-        <a href="/reset">Reset this app</a>
     </p>
     <div>Version 2.0</div>
   </body>
@@ -140,6 +153,7 @@ SCHEDULE_PAGE_TEMPLATE_1 = CSS + """\
 """
 SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
     <h1>Auto-update Settings</h1>
+    <h2>Last update ran at: %s GMT</h2>
     <h2>Admin API Token</h2>
     <p>
     <p>Last 6 characters of Current API Token = <b>%s</b></p>
@@ -299,7 +313,7 @@ def ClearCredentials(current_project_id):
     project_info = ndb.Key(Project_info, current_project_id).get()
 
     encrypt_credentials = project_info.credentials
-    pickled_credentials = decrypt(encryption_password, encrypt_credentials)
+    pickled_credentials = obj.decrypt(encrypt_credentials)
     clear_credentials = pickle.loads(pickled_credentials)
 
     return clear_credentials
@@ -335,17 +349,18 @@ class MainPage(webapp2.RequestHandler):
             step_3 = '<a href="/select">Import</a>'
             step_4 = '<a href="/schedule">Configure</a>'
 
+            #start auth flow with popout link to Google
+            auth_uri = flow.step1_get_authorize_url() + "&approval_prompt=force"
+
             #check to see if they've already done Google OAuth
             if project_info.credentials == None:
                 #append JS method to reload page after google oauth window closes
                 step_0 = '<script>var FocusMethod = function(){location.reload()}; $(document).ready(function() { $(window).one("focus", FocusMethod); } );</script>'
-                #start auth flow with popout link to Google
-                auth_uri = flow.step1_get_authorize_url()
                 step_1 = "<a href='%s'>Authenticate with Google</a>" % ('javascript:window.open("%s", "Google Account", "location=0,status=0,scrollbars=0, resizable=0, directories=0, toolbar=0, titlebar=1, width=800, height=800");' % (auth_uri))
                 step_2 = step_3 = step_4 = ""
             else:
                 step_0 = ""
-                step_1 = "Authenticated!"
+                step_1 = "Authenticated!  <a href='%s'>Re-authenticate?</a>" % ('javascript:window.open("%s", "Google Account", "location=0,status=0,scrollbars=0, resizable=0, directories=0, toolbar=0, titlebar=1, width=800, height=800");' % (auth_uri))
 
                 #check to see if they've already configure GA settings
                 if project_info.view_id == None or project_info.interval == None or project_info.dimension_id == None:
@@ -373,7 +388,7 @@ class OAuthPage(webapp2.RequestHandler):
             clear_credentials = flow.step2_exchange(code)
             #pickle and then encrypt credentials object
             pickled_credentials = pickle.dumps(clear_credentials)
-            credentials = encrypt(encryption_password, pickled_credentials)
+            credentials = obj.encrypt(pickled_credentials)
             project_info.credentials = credentials
             project_info.put()
 
@@ -505,9 +520,13 @@ class SchedulePage(webapp2.RequestHandler):
             else:
                 disabled_form = "<form action='/update' method='post'>%s<input type='submit' value='Enable Selected Segments'></form>" % (disabled_segments)
 
-            clear_api_token = decrypt(encryption_password,project_info.api_token)
+            clear_api_token = obj.decrypt(project_info.api_token)
             token_fragment = clear_api_token[len(clear_api_token)-6:]
-            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (token_fragment, project_info.update_cadence_str, enabled_form, disabled_form))
+
+            #calculate last run
+            last_run = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(project_info.last_cron_end))
+
+            self.response.write(SCHEDULE_PAGE_TEMPLATE_2 % (last_run, token_fragment, project_info.update_cadence_str, enabled_form, disabled_form))
 
 class UpdatePage(webapp2.RequestHandler):
     def post(self):
@@ -591,7 +610,7 @@ class SettingsConfPage(webapp2.RequestHandler):
                 if "api_token" in arg:
                     api_token = self.request.get(arg)
                     if len(api_token) > 0:
-                        encrypt_api_token = encrypt(encryption_password, api_token)
+                        encrypt_api_token = obj.encrypt(api_token)
                         project_info.api_token = encrypt_api_token
                         settings += '<p>API Token: %s</p>' %(api_token)
                 elif "update_cadence" in arg:
@@ -651,20 +670,22 @@ class CronPage(webapp2.RequestHandler):
         projects = qry.fetch()
 
         for project_info in projects:
+            #set var to see if anything was updated in this project
+            project_updated = False
+            print "project inf: ", project_info
             #check for last update and proceed if it has been longer than the cadence value (which is number of seconds)
-            if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end) and (project_info.last_cron_end >= project_info.last_cron_start or project_info.last_cron_end == 0):
-                #record start time to prevent cron from starting while this project is still processing segments
-                project_info.last_cron_start = int(time.time())
-                project_info.put()
+            if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end):
+                print "passed time check"
                 #get all segments where auto_update = True
                 qry = Segment_info.query(Segment_info.auto_update == True, Segment_info.project_id == project_info.project_id)
                 update_segments = qry.fetch()
+                print "Update segments ", update_segments
 
                 #get and decrypt GA credentials object
                 clear_credentials = ClearCredentials(project_info.project_id)
 
                 #get and decrypt optly api_token
-                clear_api_token = decrypt(encryption_password, project_info.api_token)
+                clear_api_token = obj.decrypt(project_info.api_token)
 
                 #get list of uploaded audience ids from Optly for project
                 url = "https://www.optimizelyapis.com/experiment/v1/projects/%s/targeting_lists/" % (project_info.project_id)
@@ -674,6 +695,7 @@ class CronPage(webapp2.RequestHandler):
                     optly_id_list.append(uploaded_list['id'])
 
                 for segment_info in update_segments:
+                    print "Now checking ", segment_info
                     #check and make sure the segment still exists in Optly project:
                     deleted = True
                     if segment_info.optly_id in optly_id_list:
@@ -684,10 +706,12 @@ class CronPage(webapp2.RequestHandler):
                         segment_info.key.delete()
                     #segment is still in Optly project, so...
                     elif deleted == False:
+                        print "now getting list_content"
                         #update list with fresh GA data
                         list_content = GetGAIds(project_info.project_id, segment_info.ga_id, clear_credentials)
                         #We should have all ids from results by now
                         if len(list_content) > 0 and len(list_content) < 180000:
+                            print "list_content contains data"
                             data = {}
 
                             data['list_content'] = ','.join(list_content)
@@ -698,8 +722,10 @@ class CronPage(webapp2.RequestHandler):
                             url = "https://www.optimizelyapis.com/experiment/v1/targeting_lists/%s/" % (segment_info.optly_id)
                             response = rest_api_put(project_info.project_id, url, data, "standard", clear_api_token)
                             html += "NEXT UPDATE RESPONSE: %s" % (response)
+                            project_updated = True
 
-                #after last segment in this project is checked, update last_cron_end to current time
+            #check to see if at least one segment was updated and then update last run time
+            if project_updated == True:
                 project_info.last_cron_end = int(time.time())
                 project_info.put()
 
