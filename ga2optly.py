@@ -673,14 +673,14 @@ class CronPage(webapp2.RequestHandler):
         for project_info in projects:
             #set var to see if anything was updated in this project
             project_updated = False
-            print "project inf: ", project_info
+            print "Now working on project", project_info.project_id
             #check for last update and proceed if it has been longer than the cadence value (which is number of seconds)
             if (int(time.time()) - project_info.update_cadence >= project_info.last_cron_end):
                 print "passed time check"
                 #get all segments where auto_update = True
                 qry = Segment_info.query(Segment_info.auto_update == True, Segment_info.project_id == project_info.project_id)
                 update_segments = qry.fetch()
-                print "Update segments ", update_segments
+                print "List of segments to check:", update_segments
 
                 #get and decrypt GA credentials object
                 clear_credentials = ClearCredentials(project_info.project_id)
@@ -696,7 +696,7 @@ class CronPage(webapp2.RequestHandler):
                     optly_id_list.append(uploaded_list['id'])
 
                 for segment_info in update_segments:
-                    print "Now checking ", segment_info
+                    print "Now checking segment with this info:", segment_info
                     #check and make sure the segment still exists in Optly project:
                     deleted = True
                     if segment_info.optly_id in optly_id_list:
