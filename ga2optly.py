@@ -48,7 +48,7 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
 
 #--------------Google Oauth, encryption, and environment-----------------------------
 #get config options from config.py
-configuration = config.get_settings("Dev") #gets environment variables.  Options are "Dev" and "Prod"
+configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
 
 #google oauth objects
 flow = client.flow_from_clientsecrets(
@@ -104,6 +104,7 @@ MAIN_PAGE_TEMPLATE = CSS + """\
     <p>
         Step 4:  Configure Automatic Updates:  %s
     </p>
+    <a href="https://docs.google.com/document/d/1bEmp4oMT4r69iDhCW3OFQs8FpDPDENHLFyMRKHSCm10/" target="_blank">See here for app usage instructions</a>
     <div>Version 2.0</div>
   </body>
 </html>
