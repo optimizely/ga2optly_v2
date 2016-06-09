@@ -22,6 +22,7 @@ from Crypto import Random
 from oauth2client import client
 from apiclient.discovery import build
 from google.appengine.ext import ndb
+from google.appengine.api import urlfetch
 
 import config
 
@@ -47,6 +48,9 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
     auto_update = ndb.BooleanProperty(indexed=True, default=False) #is auto-update enabled for this segment?
 
 #--------------Google Oauth, encryption, and environment-----------------------------
+#set max timeout for requests made using the GAE urlfetch method (used by the GA Reporting API)
+urlfetch.set_default_fetch_deadline(60)
+
 #get config options from config.py
 configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
 
@@ -571,9 +575,9 @@ class SettingsPage(webapp2.RequestHandler):
         view_list = ""
         for view in profiles['items']:
             if 'websiteUrl' in view:
-                view_name = "%s - %s (ID: %s)" % (view['websiteUrl'], view['name'], view['id'])
+                view_name = "%s - %s (ID: %s)" % (view['name'], view['websiteUrl'], view['id'])
             else:
-                view_name = "%s - %s (ID: %s)" % ("no url", view['name'], view['id'])
+                view_name = "%s (ID: %s)" % (view['name'], view['id'])
             value = view['id']
             if project_info.view_id != None:
                 if view['id'] in project_info.view_id:
