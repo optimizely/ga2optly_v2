@@ -570,7 +570,10 @@ class SettingsPage(webapp2.RequestHandler):
         #construct the picklist of views
         view_list = ""
         for view in profiles['items']:
-            view_name = "%s - %s (ID: %s)" % (view['websiteUrl'], view['name'], view['id'])
+            if 'websiteUrl' in view:
+                view_name = "%s - %s (ID: %s)" % (view['websiteUrl'], view['name'], view['id'])
+            else:
+                view_name = "%s - %s (ID: %s)" % ("no url", view['name'], view['id'])
             value = view['id']
             if project_info.view_id != None:
                 if view['id'] in project_info.view_id:
