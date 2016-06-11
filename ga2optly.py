@@ -52,7 +52,7 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
 urlfetch.set_default_fetch_deadline(60)
 
 #get config options from config.py
-configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
+configuration = config.get_settings("Dev") #gets environment variables.  Options are "Dev" and "Prod"
 
 #google oauth objects
 flow = client.flow_from_clientsecrets(
@@ -194,8 +194,9 @@ SCHEDULE_PAGE_TEMPLATE_2 = CSS + """\
 SETTINGS_PAGE_TEMPLATE = CSS + """\
     <h1>Set up importing preferences!</h1>
     <form action='/settings_conf' method='post'>
-        <p>GA View:
-            <select name="view_id" required>
+        <b>GA View</b> (Tip: use browser search to find item in list):
+        <p>
+            <select size="15" name="view_id" required>
                 %s
             </select>
         </p>
@@ -219,10 +220,16 @@ CREATE_PAGE_TEMPLATE = CSS + """\
 """
 
 SELECT_PAGE_TEMPLATE = CSS + """\
-    <h2>Please select a segment to import:</h2>
+    <h2>Please select a segment to import:</h2> (Tip: use browser search to find item in list)
     <form action='/create' method='post'>
-    %s
-    <input type='submit' value='Submit'>
+    <p>
+        <select size='20' name='segment'>
+            %s
+        </select>
+    </p>
+    <p>
+        <input type='submit' value='Submit'>
+    </p>
     </form>
     <p><a href='/'>Back to top page</a></p>
     </body>
@@ -416,11 +423,14 @@ class SelectPage(webapp2.RequestHandler):
         analytics = build('analytics', 'v3', http=http_auth)
 
         #query the api
-        segments = analytics.management().segments().list().execute()
+        segments = analytics.management().segments().list(max_results=10000).execute()
         segment_list = ""
         for segment in segments['items']:
             value = json.dumps([segment['name'],segment['segmentId']])
-            segment_list+= "<input type='radio' name='segment' value='%s'> %s (%s)<br>" % (value, segment['name'], segment['type'])
+            if segment['type'] == "CUSTOM":
+                segment_list = "<option value='%s'> %s (%s)</option><br>" % (value, segment['name'], segment['type']) + segment_list
+            else:
+                segment_list+= "<option value='%s'> %s (%s)</option><br>" % (value, segment['name'], segment['type'])
         self.response.write(SELECT_PAGE_TEMPLATE % (segment_list))
 
 
@@ -569,7 +579,7 @@ class SettingsPage(webapp2.RequestHandler):
         analytics = build('analytics', 'v3', http=http_auth)
 
         #query the api for a list of views
-        profiles = analytics.management().profiles().list(accountId='~all', webPropertyId='~all').execute()
+        profiles = analytics.management().profiles().list(accountId='~all', webPropertyId='~all', max_results=10000).execute()
 
         #construct the picklist of views
         view_list = ""
@@ -589,12 +599,12 @@ class SettingsPage(webapp2.RequestHandler):
 
         #set helptext for interval and dimension_id
         if project_info.interval == None:
-            interval_text = "<p>Number of days in the past to query: <input type='text' name='interval' required></p>"
+            interval_text = "<p><b>Number of days in the past to query:</b> <input type='text' name='interval' required></p>"
         else:
             interval_text = "<p>Currently querying the past <b>%s days</b>.<br>Enter a new period? <input type='text' name='interval'></p>" % (project_info.interval.split('daysAgo')[0])
 
         if project_info.dimension_id == None:
-            dimension_text = "<p>Index of dimension where _ga cookie value is stored: <input type='text' name='dimension_id' required></p>"
+            dimension_text = "<p><b>Index of dimension where _ga cookie value is stored:</b> <input type='text' name='dimension_id' required></p>"
         else:
             dimension_text = "<p>Current index for dimension where _ga cookie value is stored: <b>%s</b>.<br>Set new Dimension? <input type='text' name='dimension_id'></p>" % (project_info.dimension_id.split('ga:dimension')[1])
 
