@@ -22,7 +22,6 @@ from Crypto import Random
 from oauth2client import client
 from apiclient.discovery import build
 from google.appengine.ext import ndb
-from google.appengine.api import urlfetch
 
 import config
 
@@ -48,11 +47,8 @@ class Segment_info(ndb.Model): #key is "PROJECT_ID:OPTLY_ID"
     auto_update = ndb.BooleanProperty(indexed=True, default=False) #is auto-update enabled for this segment?
 
 #--------------Google Oauth, encryption, and environment-----------------------------
-#set max timeout for requests made using the GAE urlfetch method (used by the GA Reporting API)
-urlfetch.set_default_fetch_deadline(60)
-
 #get config options from config.py
-configuration = config.get_settings("Dev") #gets environment variables.  Options are "Dev" and "Prod"
+configuration = config.get_settings("Prod") #gets environment variables.  Options are "Dev" and "Prod"
 
 #google oauth objects
 flow = client.flow_from_clientsecrets(
@@ -311,7 +307,15 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
         if firstRun == False:
             params['start_index'] = int(params['start_index']) + int(params['max_results'])
 
-        response = analytics.data().ga().get(**params).execute()
+        attempt = 0
+        while attempt < 10:
+            print "GetGaIds Attempt", attempt
+            try:
+                response = analytics.data().ga().get(**params).execute()
+                break
+            except:
+                attempt += 1
+
         firstRun = False
 
         if response['totalResults'] > 0:
