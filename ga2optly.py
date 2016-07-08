@@ -296,7 +296,7 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
     firstRun = True
     params = {'ids':project_info.view_id,
             'start_date':project_info.interval,
-            'end_date':'today',
+            'end_date':'yesterday',
             'metrics':'ga:visits',
             'dimensions':project_info.dimension_id,
             'segment':segment_id,
@@ -603,9 +603,9 @@ class SettingsPage(webapp2.RequestHandler):
 
         #set helptext for interval and dimension_id
         if project_info.interval == None:
-            interval_text = "<p><b>Number of days in the past to query:</b> <input type='text' name='interval' required></p>"
+            interval_text = "<p><b>Number of days in the past to query (excluding today):</b> <input type='text' name='interval' required></p>"
         else:
-            interval_text = "<p>Currently querying the past <b>%s days</b>.<br>Enter a new period? <input type='text' name='interval'></p>" % (project_info.interval.split('daysAgo')[0])
+            interval_text = "<p>Currently querying the past <b>%s days</b> (excluding today).<br>Enter a new period? <input type='text' name='interval'></p>" % (project_info.interval.split('daysAgo')[0])
 
         if project_info.dimension_id == None:
             dimension_text = "<p><b>Index of dimension where _ga cookie value is stored:</b> <input type='text' name='dimension_id' required></p>"
