@@ -216,7 +216,9 @@ CREATE_PAGE_TEMPLATE = CSS + """\
 """
 
 SELECT_PAGE_TEMPLATE = CSS + """\
-    <h2>Please select a segment to import:</h2> (Tip: use browser search to find item in list)
+    <h2>Please select a segment to import:</h2>
+    <h3>Note:  Segments which contain GA Demographic Data (such as age, gender, affinity categories) are not supported due to <a target="_blank" href="https://support.google.com/analytics/answer/2799357?hl=en#thresholds">GA Data Thresholds</a>.</h3>
+    (Tip: use browser search to find item in list)
     <form action='/create' method='post'>
     <p>
         <select size='20' name='segment'>
