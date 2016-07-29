@@ -299,7 +299,7 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
     params = {'ids':project_info.view_id,
             'start_date':project_info.interval,
             'end_date':'yesterday',
-            'metrics':'ga:visits',
+            'metrics':'ga:sessions',
             'dimensions':project_info.dimension_id,
             'segment':segment_id,
             'start_index':1,
