@@ -310,7 +310,7 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
             params['start_index'] = int(params['start_index']) + int(params['max_results'])
 
         attempt = 0
-        while attempt < 10:
+        while attempt < 20:
             print "GetGaIds Attempt", attempt
             try:
                 response = analytics.data().ga().get(**params).execute()
@@ -320,7 +320,8 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
 
         firstRun = False
 
-        if response['totalResults'] > 0:
+
+        if response and response['totalResults'] > 0:
             for row in response['rows']:
                 list_content.append(row[0])
 
