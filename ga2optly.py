@@ -311,6 +311,7 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
 
         attempt = 0
         while attempt < 20:
+            response = None
             print "GetGaIds Attempt", attempt
             try:
                 response = analytics.data().ga().get(**params).execute()
@@ -324,6 +325,8 @@ def GetGAIds(current_project_id, segment_id, clear_credentials):
         if response and response['totalResults'] > 0:
             for row in response['rows']:
                 list_content.append(row[0])
+        else:
+            return None
 
     return list_content
 
@@ -459,7 +462,7 @@ class CreatePage(webapp2.RequestHandler):
 
             list_content = GetGAIds(current_project_id, segment_id, clear_credentials)
             #We should have all ids from results by now
-            if len(list_content) > 0 and len(list_content) < 180000:
+            if list_content and 0 < len(list_content) < 180000:
                 data = {}
                 data['list_content'] = ','.join(list_content)
                 data['name'] = "GA_Segment__" + segment_name
@@ -735,7 +738,7 @@ class CronPage(webapp2.RequestHandler):
                         #update list with fresh GA data
                         list_content = GetGAIds(project_info.project_id, segment_info.ga_id, clear_credentials)
                         #We should have all ids from results by now
-                        if len(list_content) > 0 and len(list_content) < 180000:
+                        if list_content and 0 < len(list_content) < 180000:
                             print "list_content contains data"
                             data = {}
 
